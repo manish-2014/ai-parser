@@ -1,0 +1,96 @@
+<style data-jsmodule="custom">
+
+
+
+
+    </style>
+<script type="text/javascript" data-jsmodule="customheadjs">
+
+        var newzingWebApp = newzingWebApp || {};
+        var app= app||{};
+        newzingWebApp.templates= newzingWebApp.templates || {};
+        app.userid="{{userid}}";
+        app.paginatedDataUrl = "{{{dataUrl}}}";  
+        try {
+            newzingWebApp.urlBase='{{newzingWebApp_urlBase}}';
+
+        }
+        catch (e) {
+            // statements to handle any exceptions
+            // pass exception object to error handler
+        }
+
+    </script>
+    <script type="text/javascript" data-jsmodule="customheadjs">
+    
+    </script>
+<div class="row column pagecontent" id="pageContent">
+ 
+ 
+
+    <div class="row align-center">
+       
+        <div class="large-6 columns"> <h4> List of all Video Encoding Tasks</h4>
+        </div>
+    </div>
+    
+ 
+        <div class="row">
+            <div class="large-8 columns" id="paginationPanel">
+                <div class="pagination-centered" id="paginationNavContainer">
+                    
+                </div>
+            </div>
+        </div>
+
+        <div id="errorModal" class="reveal draggable" data-reveal>
+            <div class="row">
+                <div class="large-12 columns panel" id="errMessage">
+
+                </div>
+            </div>
+
+            
+            <!-- End Content Form Holder Details -->
+            <button class="close-button" data-close aria-label="Close modal" type="button">
+                <span aria-hidden="true">&times;</span>
+            </button>
+        </div>
+
+    </div>
+<script data-jsmodule="custom">
+
+    var newzingWebApp = newzingWebApp || {};
+
+    //5240fca3e4b065c47c2f62dd
+
+    var NEWZING_DEBUG = false;
+    var newzingContainer_el="#newzingContainer";
+    newzingWebApp.templates= newzingWebApp.templates || {};
+
+
+
+        $LAB
+        .script(newzingWebApp.urlBase+'assets/js/libs/jquery.min.js')
+        .script(newzingWebApp.urlBase+'assets/js/libs/what-input.min.js')
+        .script(newzingWebApp.urlBase+'assets/js/libs/foundation.min.js')    
+        .script(newzingWebApp.urlBase+'assets/js/merged/dist/jqvalidate.js')        
+        .script(newzingWebApp.urlBase+'assets/js/merged/dist/ubm.js')
+        .script(newzingWebApp.urlBase+"assets/js/pagejs/hub/paginator-mvc.js")
+        .script(newzingWebApp.urlBase+"assets/js/pagejs/hub/encodingjobslistbb-mvc.js")
+        
+        .wait(function() {
+            $(document).foundation();
+            //app.startBB();
+            try{
+                app.startBB();
+            }
+            catch(err){
+                console.error(err);
+            }
+        });
+
+
+
+
+</script>

@@ -1,0 +1,30 @@
+start:
+  - /home/manish/projects/scotty/agentic-ai-projects/ontology/ai-parser/src
+types:
+  - .java
+  - .properties
+  - .xml
+  - .json
+  - .txt
+
+exclude:
+  - target
+  - .git
+  - .idea
+  - node_modules
+  - resources
+  - public
+  - classes
+  - out
+  - .lein
+  - .m2
+  - .vscode
+  - .nrepl-port
+  - .shadow-cljs
+  - .shadow-cljs-history
+  - .shadow-cljs-npm
+  - .shadow-cljs-npm-deps
+  - src/vdocat.deleteme
+exclude_name_patterns:
+  - "*test*.*"  # This will match files with 'Test' in the name
+result: ./context-content.txt

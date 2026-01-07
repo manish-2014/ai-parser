@@ -1,0 +1,370 @@
+<style data-jsmodule="custom">
+    .referent2 {
+        font-size: 2em;
+        position: relative;
+        width: 640px;
+
+        margin: auto;
+        background-color: #e9e9e9;
+
+    }
+
+    .r2 {
+        margin: auto;
+    }
+
+    .size-48 {
+        font-size: 48px;
+    }
+</style>
+<script type="text/javascript" data-jsmodule="customheadjs">
+    var newzingWebApp = newzingWebApp || {};
+    var app = app || {};
+    newzingWebApp.templates = newzingWebApp.templates || {};
+
+    try {
+        newzingWebApp.urlBase = '{{newzingWebApp_urlBase}}';
+        newzingWebApp.baseUri = '{{baseUri}}';
+        newzingWebApp.submitVideoUrl = newzingWebApp.baseUri + "/videoinbox/publishclip";
+        app.keepalive = "{{{keepaliveurl}}}";
+        app.s3Url = '{{{s3url}}}';// "https://s3.us-east-1.amazonaws.com/";
+        app.snapClipSize = 640;
+        app.cache4Url = '{{cache4Url}}';
+        app.aky = '{{accessKeyIdl}}';
+        app.awssectkn = '{{awssectoken}}';
+        app.videoupload = {};
+        app.videoupload.policy = '{{videopolicy}}';
+        app.videoupload.signature = '{{videosignature}}';
+        app.videofolder = '{{videofolder}}';
+        app.imgfolder = '{{imgfolder}}';
+        app.uploadbucket = "{{bucket}}";
+        app.reponsesedatalist= "{{{reponsesDataUrl}}}";
+    }
+    catch (e) {
+        // statements to handle any exceptions
+        // pass exception object to error handler
+    }
+</script>
+<script type="text/javascript" data-jsmodule="customheadjs">
+    loadcssfile(newzingWebApp.urlBase + "assets/stylesheets/foundation-icons/foundation-icons.css");
+    loadcssfile(newzingWebApp.urlBase + "assets/css/hub.css");
+    loadcssfile(newzingWebApp.urlBase + "assets/vcmplayer/video-js.min.css");
+</script>
+<div class="row pagecontent" id="pageContent">
+    <div> &nbsp;</div>
+    <span> {{{responsesScript}}} </span>
+
+    <div class="row align-justify large-12">
+        &nbsp;
+    </div>
+    <div class="row align-justify large-12">
+        <div class="column 6">
+            <h6><span class="subheader"> Video Inbox:</span> {{title}} </h6>
+        </div>
+        <div class="column large-offset-2 large-4"><a href="{{viewrequestslink}}" class="primary">Back to Video InBox List</a> </div>
+    </div>
+   
+    <div class="row align-justify large-12">
+    <ul class="tabs" data-tabs id="clipcol-tabs">
+        <li class="tabs-title is-active"><a href="#availableClipsRows" aria-selected="true">Inbox Clips</a></li>
+        <li class="tabs-title"><a data-tabs-target="panel2" href="#panel2">Mashup Selection</a></li>
+    </ul>
+    </div>
+    <div class="row tabs-content" data-tabs-content="clipcol-tabs">
+        <div class="tabs-panel is-active" id="availableClipsRows">
+            <div class="large-12 columns">
+
+                <div id="shoppingCartClipsPanel" class="row">
+                    <div class="large-12 columns demoContainer" id="sidebar">
+                    </div>
+                </div>
+            </div>
+
+        </div>
+        <div class="tabs-panel" id="panel2">
+            <div class="large-12 columns">
+                <div id="basketMessagePanel" class="row">
+                    <div class="large-12 columns demoContainer" id="basketMessage">
+                    </div>
+                </div>
+                <div id="basketClipsPanel" class="row">
+                    <div class="large-12 columns demoContainer" id="basketbar">
+                    </div>
+                    <div class="off-left">
+                        <form id="mashupForm" method="POST" action="{{mashupposturl}}">
+                            <input type="hidden" id="clipids" name="clipids"/>
+                        </form>
+                    </div>
+                       
+                </div>
+            </div>
+        </div>
+      </div>
+
+    <!-- modal -->
+    <div class="basicModal draggable" id="videoClipperModal">
+        <div class="referent2" id="video-element">
+        </div>
+        <div class="row">
+
+            <div class="columns button-group">
+                <a href="#editClip" class="button success">Edit&Pubish</a>
+                <a href="#downloadClip" class="button success">Download</a>
+                &NonBreakingSpace;
+                &NonBreakingSpace;
+                <a href="#cancelClip" class="button alert">Close</a>
+
+            </div>
+
+
+        </div>
+        <div class="row align-bottom">
+            <i> <small>You can drag this window to reposition it for your viewing comfort</small></i>
+        </div>
+        <a href="#cancelClip" class="close-button" data-close aria-label="Close modal" type="button">
+            <span aria-hidden="true">&times;</span>
+        </a>
+    </div>
+
+    <!-- snapshot modal start -->
+    <div id="snapshotModal" class="columns large-12 reveal draggable" data-reveal>
+        <!-- Content Form Holder Details
+                
+             -->
+        <ul class="tabs" data-tabs id="form-tabs">
+            <li class="tabs-title is-active"><a href="#panel1" aria-selected="true">Video Player</a></li>
+            <li class="tabs-title"><a data-tabs-target="posterPanel" href="#posterPanel">Poster Image</a></li>
+            <li class="tabs-title"><a data-tabs-target="publishPanel" href="#publishPanel">Publish Form </a></li>
+        </ul>
+        <div class="tabs-content" data-tabs-content="form-tabs">
+
+
+            <div class="tabs-panel is-active" id="panel1">
+                <div class="row">
+                    <video id="snapshotVideoElem" crossorigin="anonymous" controls class="large-12 columns"></video>
+                </div>
+            
+                
+                <div class="row">
+
+                    <div id="videoplaybackActionBar" class="large-12 columns button-group">
+                        <a href="#postersnap" class="button " id="posterClicker">Take Snapshot for Poster</a>
+                    <!--
+                        If the user want to trim video , then they can go to the mashup basket    
+                        <a href="#trimVideo" class="button " id="trimClicker"> Trim Video</a>
+                    -->    
+                    <a href="#downloadClip" class="button " id="downloadClicker"> Download Video</a>
+                        &nbsp;
+                        &nbsp;
+                        
+                        
+                        <a href="#addToMashBasket" class="button " id="basketClicker">Add To Mashup Basket</a>
+                    
+
+                    </div>
+
+                </div>
+            
+                <div class="row off-left" id="posterHolder">
+                    <div class="large-12 columns">
+                        <!-- <canvas width="512" height="512" id="postercanvasOrig"></canvas> -->
+                        <canvas width="512" height="512" id="postercanvasNew"></canvas>
+                    </div>
+                    <div class="columns  button-group  large-12">
+                        <a href="#poster/set" class="small button success radius"> Set Poster Image</a>
+                        <a href="#poster/cancel" class="tiny button secondary"> Cancel</a>
+
+                    </div>
+                </div>
+
+                <div class="row align-center off-left" id="editVideoPanel">
+                    <!-- start form -->
+                    <form class="large-12 columns">
+                        <fieldset>
+                            <legend>Select a portion of this clip</legend>
+                            <div class="large-12 columns">
+                                <div class="row">
+                                    <div class="large-4 columns">
+                                        <label>Start Time (in seconds)</label>
+                                        <input type="text" id="startClipTF" placeholder="0">
+                                    </div>
+                                    <div class="large-4 columns">
+                                        <label>End Time (in seconds)</label>
+                                        <input type="text" id="endClipTF" placeholder>
+                                    </div>
+                                </div>
+                                <div class="row smaller-60" id="clipSelectErrorMsg"></div>
+                            </div>
+                            <!-- end frm -->
+                        </fieldset>
+                    </form>
+
+                    <div class="columns large-12">
+                        <div class="small button-group">
+                            <a href="#" id="previewClipBtn" class="button success  previewBtn">Preview Clip</a>
+                            <a href="#" id="resetClipBtn" class="button secondary  resetBtn">Reset Clip</a>
+                            <a href="#" id="addClipBtn" class="button  svBtn">Save Clip</a>
+                            <a href="#cancelClip" class="button secondary  cancelBtn">Cancel</a>
+                        </div>
+                    </div>
+
+                </div>
+
+            </div>
+            <div class="tabs-panel" id="posterPanel">
+                <div class="small-7 large-7 columns  demoContainer" id="posterSource"
+                    title='Please click on the camera icon button to take a snapshot from the video clip and set it as the poster for this video'
+                    data-position="bottom" data-alignment="center">
+                    <img src="assets/img/icons/ThumbnailPlaceholderImage.gif" id="mashupPoster"
+                        crossorigin="anonymous">
+                </div>
+            </div>
+            <div class="tabs-panel" id="publishPanel">
+                <div class="row ">
+                    <div class="large-12 columns ">
+
+
+                        <section class="section">
+                            <h5 class="title"><a href="#panel1">Publish This Video </a></h5>
+
+                            <div class="content" data-slug="panel1">
+                                <form id="infoForm" method="post" action="{{publishclipurl}}">
+
+                                    <div class="row collapse">
+                                        <div class="large-10 columns panel">
+                                            <p><span id="errorFormMessage"></span></p>
+                                        </div>                                        
+                                    </div>
+
+                                    <div class="row collapse">
+                                        <div class="large-2 columns">
+                                            <label class="inline">Title</label>
+                                        </div>
+                                        <div class="large-10 columns">
+                                            <input type="text" id="fclipTitle"  required  name="title"  minlength="10" 
+                                                placeholder="Please enter the title for this Video">
+                                        </div>
+                                    </div>
+
+
+                                    <div class="row">
+                                        <input type="hidden" name="clipType" id="fclipType" value>
+                                        <input type="hidden" name="clipId" id="fclipId" value>
+                                        <input type="hidden" name="start" id="fclipStart" value>
+                                        <input type="hidden" name="stop" id="fclipStop" value>
+
+
+
+                                        <input type="hidden" id="storyid" value="{{storyid}}" name="storyid">
+                                        <input type="hidden" name="siteAccountID" id="siteAccountID"
+                                            value="{{siteAccountID}}">
+
+                                        <input type="hidden" id="imagedata" name="imagedata" value>
+
+                                    </div>
+                                    <div class="row">
+                                        <div class="large-offset-4 large-8 columns">
+                                            <a href="#submitform" class="radius button">Submit</a>
+                                        </div>
+                                    </div>
+                                </form>
+                            </div>
+                            <small> This video will be processed and automatically published to your video page ! We
+                                will also notify you by email</small>
+                        </section>
+
+
+                    </div>
+
+                </div>
+                <div id="progressPanel" class="row off-left">
+                    <!-- Content Form Holder Details -->
+                    <div class="columns large-12" id="uploadstatuscontainer">
+                        <h6>Uploading ! </h6>
+
+                        <progress id="progressBar" class="success" value="0" max="100" style="width:300px;"></progress>
+
+                        <h6 class="subheader" id="statusUpload"></h6>
+                        <p id="loaded_n_totalwebcam"></p>
+                        <div id="progressNumberWebcam"></div>
+                    </div>
+
+
+                </div>
+
+            </div>
+
+        </div>
+
+        <button class="close-button" data-close aria-label="Close reveal" type="button">
+            <span aria-hidden="true">&times;</span>
+        </button>
+    </div>
+    <!-- snapshot modal end -->
+
+    <div id="errorModal" class="reveal draggable" data-reveal>
+        <div class="row">
+            <div class="large-12 columns panel" id="errMessage">
+
+            </div>
+        </div>
+
+        
+        <!-- End Content Form Holder Details -->
+        <button class="close-button" data-close aria-label="Close modal" type="button">
+            <span aria-hidden="true">&times;</span>
+        </button>
+    </div>
+    <hr>
+
+
+    <div id="lean_overlay"></div>
+
+
+    <!-- end modals -->
+
+
+
+</div>
+<script data-jsmodule="custom">
+    var newzingWebApp = newzingWebApp || {};
+
+    //5240fca3e4b065c47c2f62dd
+
+    var NEWZING_DEBUG = false;
+    var newzingContainer_el = "#newzingContainer";
+    newzingWebApp.templates = newzingWebApp.templates || {};
+
+    $LAB
+        .script(newzingWebApp.urlBase + 'assets/js/libs/jquery.min.js')
+        .script(newzingWebApp.urlBase + 'assets/js/libs/what-input.min.js')
+        .script(newzingWebApp.urlBase + 'assets/js/libs/foundation.min.js')
+        .script(newzingWebApp.urlBase + 'assets/js/merged/dist/jqvalidate.js')
+        .script(newzingWebApp.urlBase + 'assets/js/merged/dist/ubm.js')
+        .script(newzingWebApp.urlBase + "assets/js/newzing/commons/jquery.leanmodal.00.01.js")
+        .script(newzingWebApp.urlBase + "assets/js/newzing/commons/NewzingVideoUtils.1.00.02.js")
+        .script(newzingWebApp.urlBase + "assets/js/newzing/commons/NewzingPlayListController.0.34.01.js")
+        .script(newzingWebApp.urlBase + "assets/js/newzing/commons/bb.newzing.common.00.00.js")
+        .script(newzingWebApp.urlBase + "assets/vdocat/v5/videojs-min.js")
+        .script(newzingWebApp.urlBase + "assets/js/vendor/draggabilly.pkgd.min.js")
+        .script(newzingWebApp.urlBase + 'assets/js/pagejs/hub/canvasmanager.js')
+        .script(newzingWebApp.urlBase + "assets/js/pagejs/hub/responses-mvc.js")
+        .script(newzingWebApp.urlBase + "assets/js/vendor/jquery.backstretch.min.js")
+        .wait(function () {
+            $(document).foundation();
+            // $("videoClipperModal").draggable();
+            var $draggable = $('.draggable').draggabilly();
+
+            try {
+                startBB();
+            }
+            catch (err) {
+                console.error(err);
+                //document.getElementById("demo").innerHTML = err.message;
+            }
+
+
+        })
+
+
+</script>

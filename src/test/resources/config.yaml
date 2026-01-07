@@ -1,0 +1,21 @@
+---
+# Define the jobs we want to run for this project
+job: "a job name that will be used when interacting with the llm"
+
+solutions:
+  - name: "spring-petclinic"
+    components:
+      - name: "spring-petclinic-web"
+        type: "job"
+        libs:           /home/manish/projects/opensource-legacy-codebases/spring-framework-petclinic-5.2.0/lib
+        codeBasePath : "/home/manish/projects/opensource-legacy-codebases/spring-framework-petclinic-5.2.0/src/main/job"
+
+
+
+outputPath: /home/manish/projects/temp/aidev/
+
+apacheAgeConfig:
+  username: postgres
+  password: example
+  jdbcUrl: jdbc:postgresql://localhost:5455/junit
+  driverClassName: org.postgresql.Driver

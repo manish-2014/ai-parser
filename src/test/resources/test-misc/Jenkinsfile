@@ -1,0 +1,126 @@
+pipeline {
+  agent { node { label 'lein' } }
+  
+  stages {
+    stage("vcmweb-git") {
+       steps {
+        // Just print a Hello, Pipeline to the console
+         echo "stage 1"
+         sh 'pwd'
+         
+         dir('vcmweb') {
+            echo "dir vcmweb"
+            sh "pwd"
+            git credentialsId: "${VCM_JENKINS_GIT_CREDENTIALS_ID}", url: ' git@bitbucket.org:manishsharan/vcmweb.git'
+            sh "tar xf ${HOME}/acache/vcm_node_modules.tar.gz"
+            sh 'npm install'
+            sh 'gulp build'
+         } 
+         
+       }
+    }
+      
+
+    
+    stage("hub") {
+       steps {
+        // Just print a Hello, Pipeline to the console
+         echo "stage 2"
+         sh 'pwd'
+         
+        dir('hub') {
+          echo "dir hub" 
+           sh "pwd"
+           git credentialsId: "${VCM_JENKINS_GIT_CREDENTIALS_ID}", url: ' git@bitbucket.org:manishsharan/hub-clj.git'
+           echo "stp 2 after git"
+           sh "pwd"
+           
+        } 
+         
+       }
+    }
+
+    stage("pre-build-pages") {
+       steps {
+        // Just print a Hello, Pipeline to the console
+         echo "stage build"
+         sh 'pwd'
+         
+        dir('hub') {
+          echo "dir hub" 
+           sh "pwd"
+           sh "tar xf ${HOME}/acache/vcm_node_modules.tar.gz"
+           sh "npm install"
+           sh "gulp  build"           
+        } 
+       }
+    }  
+
+    
+    stage("build") {
+       steps {
+        // Just print a Hello, Pipeline to the console
+         echo "stage build"
+         sh 'pwd'
+         
+        dir('hub') {
+          echo "dir hub" 
+           sh "pwd"
+           sh "lein do clean, versioner"
+           sh "lein with-profile uberjar ring uberjar"
+        } 
+       }
+    }
+    stage("upload-uber-jar"){
+       steps{
+          echo "uploading jar"
+          dir("hub/target"){
+                   //-------------
+                            withAWS(credentials: "${VCM_JENKINS_AWS_BUILD_USER}",region: 'us-east-1'){
+                                s3Upload(file:"hub.jar", bucket:"${VCM_AWS_S3_CODE_REPO}",                                
+                                path:"coderepo/jars/hub-${BUILD_NUMBER}.jar")
+                            }
+                   //-----------
+          }
+       }
+    }
+ // upload static assets
+
+    stage ('Invoke_dockerify') {
+            steps {
+                build job: 'dockerify-vcm-apps', 
+                parameters: [ string(name: 'VCMAPP', value: "hub"), 
+                              string(name: 'jarbuildnum', value: "${BUILD_NUMBER}")
+                              
+                              ],
+                propagate: false, wait: false
+            }
+    }
+
+ }
+post {
+      
+        always {
+            echo 'One way or another, I have finished'
+            deleteDir() /* clean up our workspace */
+        }
+        
+        success {
+            echo 'I succeeded!'
+
+
+
+
+        }
+        unstable {
+            echo 'I am unstable :/'
+        }
+        failure {
+            echo 'I failed :('
+        }
+        changed {
+            echo 'Things were different before...'
+        }
+   }
+
+} 

@@ -1,0 +1,26 @@
+llm:
+  file_types:
+    code_ext: [".java", ".clj", ".py"]
+    doc_ext:  [".md", ".rst", ".txt", ".adoc"]
+    template_ext:
+      - ".html"
+      - ".htm"
+      - ".jsp"
+      - ".jspx"
+      - ".mustache"
+      - ".hbs"          # handlebars
+      - ".handlebars"
+      - ".twig"
+      - ".thymeleaf"    # sometimes used (rare)
+      - ".ftl"          # freemarker
+      - ".vm"           # velocity
+      - ".ejs"
+      - ".pug"
+      - ".jinja"
+      - ".jinja2"
+      - ".njk"          # nunjucks
+      - ".erb"
+      - ".liquid"
+      - ".svelte"       # component templates
+      - ".vue"
+    js_ext: [".js", ".mjs", ".cjs", ".ts"]
