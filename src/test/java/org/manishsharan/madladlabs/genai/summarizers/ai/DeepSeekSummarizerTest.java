@@ -35,10 +35,17 @@ public class DeepSeekSummarizerTest {
         assertNotNull(payload, "payload is null");
         assertNotNull(payload.getFunctionEnrichments(), "functions list is null");
         assertFalse(payload.getFunctionEnrichments().isEmpty(), "no functions returned");
-        System.out.println("DeepSeekSummarizerTest.testProcessFile: functions found = " + payload.getFunctionEnrichments().size());
-        System.out.println("DeepSeekSummarizerTest .. payload start");
-        System.out.println(payload);
-        System.out.println("DeepSeekSummarizerTest .. payload _____________________________");
+        logger.info("DeepSeekSummarizerTest.testProcessFile: functions found = {}", payload.getFunctionEnrichments().size());
+        logger.info("DeepSeekSummarizerTest .. payload start\n{}", payload);
+        logger.info("DeepSeekSummarizerTest .. payload _____________________________");
+
+        AiEnrichmentPayload.BillableUsage usage = payload.getBillableUsage();
+        assertNotNull(usage, "billable usage is null");
+        logger.info("DeepSeekSummarizerTest billable: input={}, output={}, cached={}, total={}",
+                usage.getInputTokens(),
+                usage.getOutputTokens(),
+                usage.getCachedTokens(),
+                usage.getTotalTokens());
 
         assertNotNull(payload.getModule(), "module is null");
         assertFalse(payload.getModule().isBlank(), "module is blank");

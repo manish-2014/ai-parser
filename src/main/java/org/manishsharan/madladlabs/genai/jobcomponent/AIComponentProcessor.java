@@ -31,6 +31,15 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.concurrent.CompletionService;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorCompletionService;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.LongAdder;
 
 public class AIComponentProcessor implements ComponentProcessor {
 
@@ -45,6 +54,7 @@ public class AIComponentProcessor implements ComponentProcessor {
     /** Logical processor key to store against FileValidator (prevents rework). */
     private  final String PROCESSOR_KEY ;
     private final IngestionRules ingestionRules;
+    private int concurrency = 2;
 
     public AIComponentProcessor(JobConfig jobConfig) {
         // Constructor can be extended to accept dependencies if needed.
@@ -59,6 +69,17 @@ public class AIComponentProcessor implements ComponentProcessor {
         PROCESSOR_KEY = "job:" + SUMMARIZER_PROVIDER;
         ingestionRules = IngestionRules.fromConfig(jobConfig.getFileIngestionConfig());
 
+    }
+
+    public int getConcurrency() {
+        return concurrency;
+    }
+
+    public void setConcurrency(int concurrency) {
+        if (concurrency < 1) {
+            throw new IllegalArgumentException("concurrency must be >= 1");
+        }
+        this.concurrency = concurrency;
     }
 
     @Override
@@ -103,8 +124,18 @@ public class AIComponentProcessor implements ComponentProcessor {
         }
 
         // Walk repo and process eligible files
-        final int[] counters = new int[] {0, 0, 0, 0, 0, 0}; // [seen, code, template, config, doc, summarized]
-        final Map<Path, String> assetCache = new HashMap<>();
+        final AtomicInteger filesSeen = new AtomicInteger();
+        final AtomicInteger codeSeen = new AtomicInteger();
+        final AtomicInteger templateSeen = new AtomicInteger();
+        final AtomicInteger configSeen = new AtomicInteger();
+        final AtomicInteger docSeen = new AtomicInteger();
+        final AtomicInteger summarized = new AtomicInteger();
+
+        final Map<Path, String> assetCache = new ConcurrentHashMap<>();
+        final Map<String, BillableTotals> billableTotals = new ConcurrentHashMap<>();
+        final ExecutorService executor = Executors.newFixedThreadPool(concurrency);
+        final CompletionService<Void> completionService = new ExecutorCompletionService<>(executor);
+        final AtomicInteger tasksSubmitted = new AtomicInteger();
         try {
             Files.walkFileTree(repoRoot, new SimpleFileVisitor<>() {
                 @Override
@@ -144,7 +175,7 @@ public class AIComponentProcessor implements ComponentProcessor {
                         return FileVisitResult.CONTINUE;
                     }
 
-                    counters[0]++;
+                    filesSeen.incrementAndGet();
 
                     try {
                         if (isTooLarge(path, ingestionRules)) {
@@ -159,27 +190,63 @@ public class AIComponentProcessor implements ComponentProcessor {
                         }
 
                         if (isCode) {
-                            counters[1]++;
-                            processCodeFile(repoRoot, solution, component, listener, fileValidator, summarizer, path);
-                            counters[4]++;
+                            codeSeen.incrementAndGet();
+                            tasksSubmitted.incrementAndGet();
+                            completionService.submit(() -> {
+                                try {
+                                    processCodeFile(repoRoot, solution, component, listener, fileValidator, summarizer, path, billableTotals);
+                                    summarized.incrementAndGet();
+                                } catch (Exception ex) {
+                                    logger.error("AI summarization failed for {}: {}", relPath, ex.getMessage(), ex);
+                                    listener.error("AI summarization failed for " + relPath + ": " + ex.getMessage(), ex);
+                                }
+                                return null;
+                            });
                             return FileVisitResult.CONTINUE;
                         }
                         if (isTemplate) {
-                            counters[2]++;
-                            processTemplateFile(repoRoot, solution, component, listener, fileValidator, summarizer, path, assetCache);
-                            counters[4]++;
+                            templateSeen.incrementAndGet();
+                            tasksSubmitted.incrementAndGet();
+                            completionService.submit(() -> {
+                                try {
+                                    processTemplateFile(repoRoot, solution, component, listener, fileValidator, summarizer, path, assetCache, billableTotals);
+                                    summarized.incrementAndGet();
+                                } catch (Exception ex) {
+                                    logger.error("AI summarization failed for {}: {}", relPath, ex.getMessage(), ex);
+                                    listener.error("AI summarization failed for " + relPath + ": " + ex.getMessage(), ex);
+                                }
+                                return null;
+                            });
                             return FileVisitResult.CONTINUE;
                         }
                         if (isConfig) {
-                            counters[3]++;
-                            processConfigFile(repoRoot, solution, component, listener, fileValidator, summarizer, path, fileName);
-                            counters[5]++;
+                            configSeen.incrementAndGet();
+                            tasksSubmitted.incrementAndGet();
+                            completionService.submit(() -> {
+                                try {
+                                    processConfigFile(repoRoot, solution, component, listener, fileValidator, summarizer, path, fileName, billableTotals);
+                                    summarized.incrementAndGet();
+                                } catch (Exception ex) {
+                                    logger.error("AI summarization failed for {}: {}", relPath, ex.getMessage(), ex);
+                                    listener.error("AI summarization failed for " + relPath + ": " + ex.getMessage(), ex);
+                                }
+                                return null;
+                            });
                             return FileVisitResult.CONTINUE;
                         }
                         if (isDocument) {
-                            counters[4]++;
-                            processDocumentFile(repoRoot, solution, component, listener, fileValidator, summarizer, path);
-                            counters[5]++;
+                            docSeen.incrementAndGet();
+                            tasksSubmitted.incrementAndGet();
+                            completionService.submit(() -> {
+                                try {
+                                    processDocumentFile(repoRoot, solution, component, listener, fileValidator, summarizer, path, billableTotals);
+                                    summarized.incrementAndGet();
+                                } catch (Exception ex) {
+                                    logger.error("AI summarization failed for {}: {}", relPath, ex.getMessage(), ex);
+                                    listener.error("AI summarization failed for " + relPath + ": " + ex.getMessage(), ex);
+                                }
+                                return null;
+                            });
                         }
                     } catch (Exception ex) {
                         logger.error("AI summarization failed for {}: {}", relPath, ex.getMessage(), ex);
@@ -189,12 +256,43 @@ public class AIComponentProcessor implements ComponentProcessor {
                 }
             });
 
+            for (int i = 0; i < tasksSubmitted.get(); i++) {
+                try {
+                    Future<Void> future = completionService.take();
+                    future.get();
+                } catch (InterruptedException ex) {
+                    Thread.currentThread().interrupt();
+                    logger.error("Interrupted while waiting for file processing tasks.");
+                    break;
+                } catch (ExecutionException ex) {
+                    logger.error("File processing task failed: {}", ex.getCause() != null ? ex.getCause().getMessage() : ex.getMessage(), ex);
+                }
+            }
+
             logger.info("AIComponentProcessor: Done. Files seen={}, eligible={}, summarized={}",
-                    counters[0], counters[1] + counters[2] + counters[3] + counters[4], counters[5]);
+                    filesSeen.get(),
+                    codeSeen.get() + templateSeen.get() + configSeen.get() + docSeen.get(),
+                    summarized.get());
+            if (!billableTotals.isEmpty()) {
+                for (Map.Entry<String, BillableTotals> entry : billableTotals.entrySet()) {
+                    BillableTotals totals = entry.getValue();
+                    logger.info(
+                            "Billable usage summary [{}] files={}, input={}, output={}, cached={}, total={}",
+                            entry.getKey(),
+                            totals.files.sum(),
+                            totals.inputTokens.sum(),
+                            totals.outputTokens.sum(),
+                            totals.cachedTokens.sum(),
+                            totals.totalTokens.sum()
+                    );
+                }
+            }
 
         } catch (IOException ioEx) {
             logger.error("Error traversing code base: {}", ioEx.getMessage(), ioEx);
             listener.error("Error traversing code base: " + ioEx.getMessage(), ioEx);
+        } finally {
+            executor.shutdown();
         }
     }
 
@@ -323,7 +421,8 @@ public class AIComponentProcessor implements ComponentProcessor {
                                  OntologyListener listener,
                                  FileValidator fileValidator,
                                  OntologyMethodsSummarizer summarizer,
-                                 Path path) throws Exception {
+                                 Path path,
+                                 Map<String, BillableTotals> billableTotals) throws Exception {
         final String language = languageFromExtension(path);
         final String relPath = repoRoot.relativize(path).toString();
 
@@ -342,6 +441,7 @@ public class AIComponentProcessor implements ComponentProcessor {
         }
         payload.setComponent(component.getName());
         payload.setSolution(solution.getName());
+        logBillableUsage(relPath, payload, billableTotals);
 
         if (payload.getFunctionEnrichments() == null || payload.getFunctionEnrichments().isEmpty()) {
             logger.warn("No enrichment returned for: {}", relPath);
@@ -359,7 +459,8 @@ public class AIComponentProcessor implements ComponentProcessor {
                                      FileValidator fileValidator,
                                      OntologyMethodsSummarizer summarizer,
                                      Path path,
-                                     Map<Path, String> assetCache) throws Exception {
+                                     Map<Path, String> assetCache,
+                                     Map<String, BillableTotals> billableTotals) throws Exception {
         final String relPath = repoRoot.relativize(path).toString();
         boolean eligible = fileValidator.isEligibleForLLMProcessing(
                 solution.getName(), component.getName(), relPath, path.toFile());
@@ -382,6 +483,7 @@ public class AIComponentProcessor implements ComponentProcessor {
         if (!bundle.relationships.isEmpty()) {
             payload.setFileRelationships(bundle.relationships);
         }
+        logBillableUsage(relPath, payload, billableTotals);
 
         listener.processLLMEnrichment(solution, component, relPath, payload);
         fileValidator.aiParseCompleted(solution.getName(), component.getName(), relPath, path.toFile());
@@ -395,7 +497,8 @@ public class AIComponentProcessor implements ComponentProcessor {
                                    FileValidator fileValidator,
                                    OntologyMethodsSummarizer summarizer,
                                    Path path,
-                                   String fileName) throws Exception {
+                                   String fileName,
+                                   Map<String, BillableTotals> billableTotals) throws Exception {
         final String relPath = repoRoot.relativize(path).toString();
         boolean eligible = fileValidator.isEligibleForLLMProcessing(
                 solution.getName(), component.getName(), relPath, path.toFile());
@@ -413,6 +516,7 @@ public class AIComponentProcessor implements ComponentProcessor {
         }
         payload.setComponent(component.getName());
         payload.setSolution(solution.getName());
+        logBillableUsage(relPath, payload, billableTotals);
         listener.processLLMEnrichment(solution, component, relPath, payload);
         fileValidator.aiParseCompleted(solution.getName(), component.getName(), relPath, path.toFile());
         logger.info("AI config summarization recorded for: {}", relPath);
@@ -424,7 +528,8 @@ public class AIComponentProcessor implements ComponentProcessor {
                                      OntologyListener listener,
                                      FileValidator fileValidator,
                                      OntologyMethodsSummarizer summarizer,
-                                     Path path) throws Exception {
+                                     Path path,
+                                     Map<String, BillableTotals> billableTotals) throws Exception {
         final String relPath = repoRoot.relativize(path).toString();
         boolean eligible = fileValidator.isEligibleForLLMProcessing(
                 solution.getName(), component.getName(), relPath, path.toFile());
@@ -447,9 +552,54 @@ public class AIComponentProcessor implements ComponentProcessor {
         }
         payload.setComponent(component.getName());
         payload.setSolution(solution.getName());
+        logBillableUsage(relPath, payload, billableTotals);
         listener.processLLMEnrichment(solution, component, relPath, payload);
         fileValidator.aiParseCompleted(solution.getName(), component.getName(), relPath, path.toFile());
         logger.info("AI document summarization recorded for: {}", relPath);
+    }
+
+    private static void logBillableUsage(String relPath,
+                                         AiEnrichmentPayload payload,
+                                         Map<String, BillableTotals> billableTotals) {
+        if (payload == null || payload.getBillableUsage() == null) {
+            return;
+        }
+        AiEnrichmentPayload.BillableUsage usage = payload.getBillableUsage();
+        if (usage.getFilePath() == null || usage.getFilePath().isBlank()) {
+            usage.setFilePath(relPath);
+        }
+        String model = usage.getModel() != null && !usage.getModel().isBlank()
+                ? usage.getModel()
+                : "unknown";
+
+        logger.info(
+                "Billable usage [{}] {} -> input={}, output={}, cached={}, total={}",
+                model,
+                usage.getFilePath(),
+                usage.getInputTokens(),
+                usage.getOutputTokens(),
+                usage.getCachedTokens(),
+                usage.getTotalTokens()
+        );
+
+        BillableTotals totals = billableTotals.computeIfAbsent(model, k -> new BillableTotals());
+        totals.add(usage);
+    }
+
+    private static class BillableTotals {
+        private final LongAdder files = new LongAdder();
+        private final LongAdder inputTokens = new LongAdder();
+        private final LongAdder outputTokens = new LongAdder();
+        private final LongAdder cachedTokens = new LongAdder();
+        private final LongAdder totalTokens = new LongAdder();
+
+        private void add(AiEnrichmentPayload.BillableUsage usage) {
+            files.increment();
+            inputTokens.add(usage.getInputTokens());
+            outputTokens.add(usage.getOutputTokens());
+            cachedTokens.add(usage.getCachedTokens());
+            totalTokens.add(usage.getTotalTokens());
+        }
     }
 
     private String detectConfigType(Path path, String fileName) {

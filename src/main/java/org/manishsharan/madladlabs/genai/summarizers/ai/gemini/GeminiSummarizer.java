@@ -15,6 +15,7 @@ import okhttp3.Response;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.jetbrains.annotations.NotNull;
+import org.manishsharan.madladlabs.genai.logging.LlmAuditSink;
 import org.manishsharan.madladlabs.genai.summarizers.ai.PromptUtils;
 import org.manishsharan.madladlabs.genai.summarizers.ai.PromptTemplateForConfigTemplates;
 import org.manishsharan.madladlabs.genai.summarizers.ai.PromptTemplateForDocuments;
@@ -64,7 +65,7 @@ public class GeminiSummarizer implements OntologyMethodsSummarizer {
         }
         return instance;
     }
-    public String invokeLLM(String promptForllm) throws IOException {
+    public GeminiResponse invokeLLM(String promptForllm, String filePath, String pipeline) throws IOException {
         // Create the request body as before
         ObjectMapper mapper = new ObjectMapper();
 
@@ -141,7 +142,11 @@ public class GeminiSummarizer implements OntologyMethodsSummarizer {
 
         // Convert request to JSON string
         String requestJson = mapper.writeValueAsString(requestBody);
-        logger.debug("REQUEST BODY:\n" + requestJson);
+        logger.info("Gemini request prepared (payload bytes={}) file={} pipeline={}",
+                requestJson.length(),
+                filePath,
+                pipeline);
+        String requestId = LlmAuditSink.logRequest("gemini", MODEL_NAME, pipeline, filePath, requestJson);
 
         // Make the HTTP request
         //OkHttpClient client = new OkHttpClient();
@@ -161,11 +166,19 @@ public class GeminiSummarizer implements OntologyMethodsSummarizer {
                 throw new IOException("Unexpected code " + response);
             }
             String rawResponse = response.body().string();
-            return extractCandidateText(mapper, rawResponse);
+            logger.info("Gemini response received (bytes={}) file={} pipeline={}",
+                    rawResponse.length(),
+                    filePath,
+                    pipeline);
+            LlmAuditSink.logResponse(requestId, "gemini", MODEL_NAME, pipeline, filePath, rawResponse);
+            return extractCandidateResponse(mapper, rawResponse);
         }
     }
 
-    private String invokeLLMFreeform(String promptForllm, String responseMimeType) throws IOException {
+    private GeminiResponse invokeLLMFreeform(String promptForllm,
+                                             String responseMimeType,
+                                             String filePath,
+                                             String pipeline) throws IOException {
         ObjectMapper mapper = new ObjectMapper();
 
         ObjectNode requestBody = mapper.createObjectNode();
@@ -186,6 +199,11 @@ public class GeminiSummarizer implements OntologyMethodsSummarizer {
         }
 
         String requestJson = mapper.writeValueAsString(requestBody);
+        logger.info("Gemini request prepared (payload bytes={}) file={} pipeline={}",
+                requestJson.length(),
+                filePath,
+                pipeline);
+        String requestId = LlmAuditSink.logRequest("gemini", MODEL_NAME, pipeline, filePath, requestJson);
         RequestBody body = RequestBody.create(
                 requestJson,
                 MediaType.parse("application/json; charset=utf-8")
@@ -202,11 +220,16 @@ public class GeminiSummarizer implements OntologyMethodsSummarizer {
                 throw new IOException("Unexpected code " + response);
             }
             String rawResponse = response.body().string();
-            return extractCandidateText(mapper, rawResponse);
+            logger.info("Gemini response received (bytes={}) file={} pipeline={}",
+                    rawResponse.length(),
+                    filePath,
+                    pipeline);
+            LlmAuditSink.logResponse(requestId, "gemini", MODEL_NAME, pipeline, filePath, rawResponse);
+            return extractCandidateResponse(mapper, rawResponse);
         }
     }
 
-    private static String extractCandidateText(ObjectMapper mapper, String rawResponse) throws IOException {
+    private static GeminiResponse extractCandidateResponse(ObjectMapper mapper, String rawResponse) throws IOException {
         JsonNode root = mapper.readTree(rawResponse);
         JsonNode candidates = root.path("candidates");
         if (!candidates.isArray() || candidates.size() == 0) {
@@ -218,7 +241,9 @@ public class GeminiSummarizer implements OntologyMethodsSummarizer {
         if (!partsNode.isArray() || partsNode.size() == 0) {
             throw new IOException("No 'parts' found in Gemini response.");
         }
-        return partsNode.get(0).path("text").asText();
+        String text = partsNode.get(0).path("text").asText();
+        JsonNode usageMetadata = root.path("usageMetadata");
+        return new GeminiResponse(text, usageMetadata.isMissingNode() ? null : usageMetadata);
     }
 
 
@@ -321,7 +346,8 @@ public class GeminiSummarizer implements OntologyMethodsSummarizer {
         String userPrompt = TemplateRenderer.getRenderedPrompt(map);
         logger.debug("summarizeJavaCodeMethods Prompt: " + userPrompt);
         //String responseString = invokeLLM(userPrompt);
-        String responseString = invokeLLM(userPrompt);
+        GeminiResponse response = invokeLLM(userPrompt, relativePath, "code");
+        String responseString = response.getContent();
 
         logger.debug("summarizeJavaCodeMethods Response: " + responseString);
         System.out.println("summarizeJavaCodeMethods Response: " + responseString);
@@ -330,7 +356,20 @@ public class GeminiSummarizer implements OntologyMethodsSummarizer {
         // help complete this method to return a json not
         if(responseNode != null){
             AiEnrichmentPayload payload = AiEnrichmentPayload.fromJson(responseNode.toString());
+            if (payload.getFunctionEnrichments() == null && responseNode.has("functions")) {
+                List<AiEnrichmentPayload.FunctionEnrichment> functions = mapper
+                        .readerForListOf(AiEnrichmentPayload.FunctionEnrichment.class)
+                        .readValue(responseNode.get("functions"));
+                payload.setFunctionEnrichments(functions);
+            }
+            if (payload.getModule() == null) {
+                payload.setModule(responseNode.path("module").asText(null));
+            }
+            if (payload.getLanguage() == null) {
+                payload.setLanguage(responseNode.path("language").asText(null));
+            }
             payload.setLlmModel(MODEL_NAME);
+            payload.setBillableUsage(extractBillableUsage(response.getUsageMetadata(), relativePath));
             return payload;
         }
         return null;
@@ -343,7 +382,8 @@ public class GeminiSummarizer implements OntologyMethodsSummarizer {
         map.put("relativeFilePath", relativePath);
         map.put("sourceFileContent", content);
         String userPrompt = TemplateRenderer.renderTemplate(PromptTemplateForGUITemplates.PROMPT_TEMPLATE, map);
-        String responseString = invokeLLMFreeform(userPrompt, "application/json");
+        GeminiResponse response = invokeLLMFreeform(userPrompt, "application/json", relativePath, "gui");
+        String responseString = response.getContent();
         ObjectMapper mapper = new ObjectMapper();
         JsonNode jsonNode = mapper.readTree(responseString);
         AiEnrichmentPayload.TemplateEnrichment template =
@@ -351,6 +391,7 @@ public class GeminiSummarizer implements OntologyMethodsSummarizer {
         AiEnrichmentPayload payload = new AiEnrichmentPayload();
         payload.setTemplateEnrichments(List.of(template));
         payload.setLlmModel(MODEL_NAME);
+        payload.setBillableUsage(extractBillableUsage(response.getUsageMetadata(), relativePath));
         return payload;
     }
 
@@ -361,7 +402,8 @@ public class GeminiSummarizer implements OntologyMethodsSummarizer {
         map.put("relativeFilePath", relativePath);
         map.put("sourceFileContent", content);
         String userPrompt = TemplateRenderer.renderTemplate(PromptTemplateForConfigTemplates.PROMPT_TEMPLATE, map);
-        String responseString = invokeLLMFreeform(userPrompt, "text/plain");
+        GeminiResponse response = invokeLLMFreeform(userPrompt, "text/plain", relativePath, "config");
+        String responseString = response.getContent();
         if (responseString == null || responseString.isBlank()) {
             return null;
         }
@@ -373,6 +415,7 @@ public class GeminiSummarizer implements OntologyMethodsSummarizer {
         AiEnrichmentPayload payload = new AiEnrichmentPayload();
         payload.setConfigEnrichments(List.of(config));
         payload.setLlmModel(MODEL_NAME);
+        payload.setBillableUsage(extractBillableUsage(response.getUsageMetadata(), relativePath));
         return payload;
     }
 
@@ -388,7 +431,8 @@ public class GeminiSummarizer implements OntologyMethodsSummarizer {
         map.put("sourceDocTime", datetime != null ? datetime : "");
         map.put("sourceFileExtractedContent", extractedContent != null ? extractedContent : "");
         String userPrompt = TemplateRenderer.renderTemplate(PromptTemplateForDocuments.PROMPT_TEMPLATE, map);
-        String responseString = invokeLLMFreeform(userPrompt, "text/plain");
+        GeminiResponse response = invokeLLMFreeform(userPrompt, "text/plain", relativePath, "document");
+        String responseString = response.getContent();
         if (responseString == null || responseString.isBlank()) {
             return null;
         }
@@ -402,6 +446,43 @@ public class GeminiSummarizer implements OntologyMethodsSummarizer {
         AiEnrichmentPayload payload = new AiEnrichmentPayload();
         payload.setDocumentEnrichments(List.of(doc));
         payload.setLlmModel(MODEL_NAME);
+        payload.setBillableUsage(extractBillableUsage(response.getUsageMetadata(), relativePath));
         return payload;
+    }
+
+    private static AiEnrichmentPayload.BillableUsage extractBillableUsage(JsonNode usageMetadata, String filePath) {
+        if (usageMetadata == null || usageMetadata.isMissingNode() || usageMetadata.isNull()) {
+            return null;
+        }
+        int inputTokens = usageMetadata.path("promptTokenCount").asInt(0);
+        int outputTokens = usageMetadata.path("candidatesTokenCount").asInt(0);
+        int totalTokens = usageMetadata.path("totalTokenCount").asInt(inputTokens + outputTokens);
+
+        AiEnrichmentPayload.BillableUsage billable = new AiEnrichmentPayload.BillableUsage();
+        billable.setModel(MODEL_NAME);
+        billable.setFilePath(filePath);
+        billable.setInputTokens(inputTokens);
+        billable.setOutputTokens(outputTokens);
+        billable.setCachedTokens(0);
+        billable.setTotalTokens(totalTokens);
+        return billable;
+    }
+
+    public static class GeminiResponse {
+        private final String content;
+        private final JsonNode usageMetadata;
+
+        public GeminiResponse(String content, JsonNode usageMetadata) {
+            this.content = content;
+            this.usageMetadata = usageMetadata;
+        }
+
+        public String getContent() {
+            return content;
+        }
+
+        public JsonNode getUsageMetadata() {
+            return usageMetadata;
+        }
     }
 }

@@ -4,6 +4,7 @@ Goals
 - Skip generated/vendor/build outputs deterministically during repository traversal.
 - Add dedicated ingestion paths for GUI templates and configuration files.
 - Add document ingestion for Tika-supported formats (PDF, Office, Markdown, etc.).
+- Support PDF/doc/RTF/Office documents via Apache Tika extraction and a dedicated LLM prompt.
 - Keep existing code-method summarization intact and compatible.
 - Map new GUI/config outputs into the existing ontology/graph relationships.
 
@@ -50,6 +51,10 @@ Key Components
 - Uses Apache Tika to extract text and metadata (title, modified/created time).
 - Uses PromptTemplateForDocuments to produce a structured text summary.
 - Output stored as AiEnrichmentPayload.documentEnrichments.
+
+Testing
+- DocumentExtractorTest validates Markdown and PDF extraction via Tika.
+- DeepSeekDocumentSummarizerTest exercises the document summarizer pipeline with the sample PDF.
 
 5) Size limits
 - maxFileSizeBytes is configurable (default 1,000,000 bytes).

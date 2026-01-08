@@ -8,10 +8,10 @@ file_path="/home/manish/projects/devops/environment-center/APIKeysForLLMs/.env"
 while IFS='=' read -r key value; do
   # Export the key-value pair as an environment variable
   export "$key"="$value"
-  echo "$key = $value"
 done < "$file_path"
 #mvn -Dtest=DeepSeekSummarizerTest test
 #mvn -Dtest=HaikuSummarizerTest test
-mvn clean compile -Dtest=%1 test install
+mkdir -p logs
+mvn test -Dtest="$1"
 
 echo "Hello world.. your environment is set up"

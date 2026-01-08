@@ -14,6 +14,8 @@ import static org.junit.jupiter.api.Assertions.*;
 
 public class GeminiSummarizerTest
 {
+    private static final org.apache.logging.log4j.Logger logger =
+            org.apache.logging.log4j.LogManager.getLogger(GeminiSummarizerTest.class);
     OntologyMethodsSummarizer summarizer;
     @BeforeEach
     void setUp() {
@@ -40,6 +42,14 @@ public class GeminiSummarizerTest
         assertNotNull(payload.getFunctionEnrichments(), "functions list is null");
         assertFalse(payload.getFunctionEnrichments().isEmpty(), "no functions returned");
 
+        AiEnrichmentPayload.BillableUsage usage = payload.getBillableUsage();
+        assertNotNull(usage, "billable usage is null");
+        logger.info("GeminiSummarizerTest billable: input={}, output={}, cached={}, total={}",
+                usage.getInputTokens(),
+                usage.getOutputTokens(),
+                usage.getCachedTokens(),
+                usage.getTotalTokens());
+
         for (AiEnrichmentPayload.FunctionEnrichment fn : payload.getFunctionEnrichments()) {
             assertNotNull(fn, "function entry is null");
             assertNotNull(fn.getFqn(), "fqn is null");
@@ -48,9 +58,8 @@ public class GeminiSummarizerTest
             assertNotNull(fn.getDescription(), "description is null");
             assertFalse(fn.getDescription().isBlank(), "description is blank");
 
-            System.out.println("GeminiSummarizerTest .. payload start");
-            System.out.println(payload);
-            System.out.println("GeminiSummarizerTest .. payload _____________________________");
+            logger.info("GeminiSummarizerTest .. payload start\n{}", payload);
+            logger.info("GeminiSummarizerTest .. payload _____________________________");
 
 
             List<AiEnrichmentPayload.Edge> rels = fn.getRelationships();

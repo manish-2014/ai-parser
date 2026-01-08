@@ -15,6 +15,7 @@ import okhttp3.Response;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.jetbrains.annotations.NotNull;
+import org.manishsharan.madladlabs.genai.logging.LlmAuditSink;
 import org.manishsharan.madladlabs.genai.summarizers.ai.PromptUtils;
 import org.manishsharan.madladlabs.genai.summarizers.ai.PromptTemplateForConfigTemplates;
 import org.manishsharan.madladlabs.genai.summarizers.ai.PromptTemplateForDocuments;
@@ -33,7 +34,6 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.util.HashMap;
 import java.util.List;
-import java.util.List;
 import java.util.concurrent.TimeUnit;
 
 public class HaikuSummarizer  implements OntologyMethodsSummarizer {
@@ -48,13 +48,20 @@ public class HaikuSummarizer  implements OntologyMethodsSummarizer {
     private static HaikuSummarizer instance;
     private final OkHttpClient client;
 
-    private final static  String CLAUDE_MODEL="claude-haiku-4-5-20251001";
+    private final static  String ANTHROPIC_VERSION="anthropic-version: 2023-06-01";
+    private final static  String HAIKU="claude-haiku-4-5-20251001";
+    private final static  String SONNET="claude-sonnet-4-5-20250929";
+    private final static  String OPUS="claude-opus-4-5-20251101";
+
+    private final static Integer MAX_TOKENS=20000;
+    private final static  String CLAUDE_MODEL=HAIKU;
 
     private HaikuSummarizer() {
         API_KEY = System.getenv("ANTHROPIC_API_KEY");
         this.client = new OkHttpClient.Builder()
-                .connectTimeout(30, TimeUnit.SECONDS)
-                .readTimeout(30, TimeUnit.SECONDS)
+                .connectTimeout(90, TimeUnit.SECONDS)
+                .readTimeout(180, TimeUnit.SECONDS)
+                .callTimeout(180, TimeUnit.SECONDS)
                 .build();
     }
 
@@ -65,20 +72,30 @@ public class HaikuSummarizer  implements OntologyMethodsSummarizer {
         return instance;
     }
 
-    public String invokeLLM(String userPrompt) throws IOException {
+    public String invokeLLM(String userPrompt, String filePath, String pipeline) throws IOException {
         ObjectMapper mapper = new ObjectMapper();
         ObjectNode payload = mapper.createObjectNode();
         //claude-3-5-haiku-20241022
-        payload.put("model", "claude-3-5-sonnet-20241022");
-        payload.put("max_tokens", 4096);
+        payload.put("model", CLAUDE_MODEL);
+        payload.put("max_tokens", MAX_TOKENS);
+        payload.put("temperature", 1);
         ObjectNode message = mapper.createObjectNode();
         message.put("role", "user");
-        message.put("content", userPrompt);
+        ArrayNode content = mapper.createArrayNode();
+        ObjectNode textNode = mapper.createObjectNode();
+        textNode.put("type", "text");
+        textNode.put("text", userPrompt);
+        content.add(textNode);
+        message.set("content", content);
         payload.putArray("messages").add(message);
 
         RequestBody body = RequestBody.create(payload.toString(), JSON);
 
-        logger.debug("invokeLLM Request: " + payload.toPrettyString());
+        logger.info("Anthropic request prepared (payload bytes={}) file={} pipeline={}",
+                payload.toString().length(),
+                filePath,
+                pipeline);
+        String requestId = LlmAuditSink.logRequest("anthropic", CLAUDE_MODEL, pipeline, filePath, payload.toString());
 
         Request request = new Request.Builder()
                 .url(API_URL)
@@ -95,6 +112,11 @@ public class HaikuSummarizer  implements OntologyMethodsSummarizer {
             }
 
             String responseBody = response.body() != null ? response.body().string() : "";
+            logger.info("Anthropic response received (bytes={}) file={} pipeline={}",
+                    responseBody.length(),
+                    filePath,
+                    pipeline);
+            LlmAuditSink.logResponse(requestId, "anthropic", CLAUDE_MODEL, pipeline, filePath, responseBody);
             JsonNode jsonResponse = mapper.readTree(responseBody);
             return jsonResponse.toPrettyString();
         }
@@ -116,11 +138,14 @@ public class HaikuSummarizer  implements OntologyMethodsSummarizer {
         String userPrompt = TemplateRenderer.getRenderedPrompt(map);
 
 
-        String responseString = invokeLLM( userPrompt);
+        String responseString = invokeLLM(userPrompt, relativePath, "code");
 
         logger.debug("summarizeJavaCodeMethods Response: " + responseString);
 
         AiEnrichmentPayload payload= extractResponse( responseString);
+        if (payload != null) {
+            payload.setBillableUsage(extractBillableUsage(responseString, relativePath));
+        }
         return payload;
     }
 
@@ -131,18 +156,22 @@ public class HaikuSummarizer  implements OntologyMethodsSummarizer {
         map.put("relativeFilePath", relativePath);
         map.put("sourceFileContent", content);
         String userPrompt = TemplateRenderer.renderTemplate(PromptTemplateForGUITemplates.PROMPT_TEMPLATE, map);
-        String responseString = invokeLLM(userPrompt);
+        String responseString = invokeLLM(userPrompt, relativePath, "gui");
         String assistantText = extractAssistantText(responseString);
         if (assistantText == null || assistantText.isBlank()) {
             return null;
         }
+        JsonNode jsonNode = extractStructuredJson(assistantText, "file", "summary");
+        if (jsonNode == null) {
+            return null;
+        }
         ObjectMapper mapper = new ObjectMapper();
-        JsonNode jsonNode = mapper.readTree(assistantText);
         AiEnrichmentPayload.TemplateEnrichment template =
                 mapper.treeToValue(jsonNode, AiEnrichmentPayload.TemplateEnrichment.class);
         AiEnrichmentPayload payload = new AiEnrichmentPayload();
         payload.setTemplateEnrichments(List.of(template));
         payload.setLlmModel(CLAUDE_MODEL);
+        payload.setBillableUsage(extractBillableUsage(responseString, relativePath));
         return payload;
     }
 
@@ -153,7 +182,7 @@ public class HaikuSummarizer  implements OntologyMethodsSummarizer {
         map.put("relativeFilePath", relativePath);
         map.put("sourceFileContent", content);
         String userPrompt = TemplateRenderer.renderTemplate(PromptTemplateForConfigTemplates.PROMPT_TEMPLATE, map);
-        String responseString = invokeLLM(userPrompt);
+        String responseString = invokeLLM(userPrompt, relativePath, "config");
         String assistantText = extractAssistantText(responseString);
         if (assistantText == null || assistantText.isBlank()) {
             return null;
@@ -166,6 +195,7 @@ public class HaikuSummarizer  implements OntologyMethodsSummarizer {
         AiEnrichmentPayload payload = new AiEnrichmentPayload();
         payload.setConfigEnrichments(List.of(config));
         payload.setLlmModel(CLAUDE_MODEL);
+        payload.setBillableUsage(extractBillableUsage(responseString, relativePath));
         return payload;
     }
 
@@ -181,7 +211,7 @@ public class HaikuSummarizer  implements OntologyMethodsSummarizer {
         map.put("sourceDocTime", datetime != null ? datetime : "");
         map.put("sourceFileExtractedContent", extractedContent != null ? extractedContent : "");
         String userPrompt = TemplateRenderer.renderTemplate(PromptTemplateForDocuments.PROMPT_TEMPLATE, map);
-        String responseString = invokeLLM(userPrompt);
+        String responseString = invokeLLM(userPrompt, relativePath, "document");
         String assistantText = extractAssistantText(responseString);
         if (assistantText == null || assistantText.isBlank()) {
             return null;
@@ -196,6 +226,7 @@ public class HaikuSummarizer  implements OntologyMethodsSummarizer {
         AiEnrichmentPayload payload = new AiEnrichmentPayload();
         payload.setDocumentEnrichments(List.of(doc));
         payload.setLlmModel(CLAUDE_MODEL);
+        payload.setBillableUsage(extractBillableUsage(responseString, relativePath));
         return payload;
     }
 
@@ -209,9 +240,25 @@ public class HaikuSummarizer  implements OntologyMethodsSummarizer {
         if (contentArray.isArray()) {
             for (JsonNode contentNode : contentArray) {
                 if (contentNode.has("text")) {
-                    JsonNode responseNode= mapper.readTree(contentNode.get("text").asText());
+                    JsonNode responseNode = extractStructuredJson(contentNode.get("text").asText(),
+                            "functions", "module");
+                    if (responseNode == null) {
+                        continue;
+                    }
                     logger.debug("summarizeJavaCodeMethods Response Node: " + responseNode.toString());
                     AiEnrichmentPayload payload= AiEnrichmentPayload.fromJson(responseNode.toString());
+                    if (payload.getFunctionEnrichments() == null && responseNode.has("functions")) {
+                        List<AiEnrichmentPayload.FunctionEnrichment> functions = mapper
+                                .readerForListOf(AiEnrichmentPayload.FunctionEnrichment.class)
+                                .readValue(responseNode.get("functions"));
+                        payload.setFunctionEnrichments(functions);
+                    }
+                    if (payload.getModule() == null) {
+                        payload.setModule(responseNode.path("module").asText(null));
+                    }
+                    if (payload.getLanguage() == null) {
+                        payload.setLanguage(responseNode.path("language").asText(null));
+                    }
                     payload.setLlmModel(CLAUDE_MODEL);
                     return payload;
 
@@ -220,6 +267,38 @@ public class HaikuSummarizer  implements OntologyMethodsSummarizer {
         }
         return null;
 
+    }
+
+    private static AiEnrichmentPayload.BillableUsage extractBillableUsage(String responseString, String filePath) {
+        if (responseString == null || responseString.isBlank()) {
+            return null;
+        }
+        ObjectMapper mapper = new ObjectMapper();
+        try {
+            JsonNode jsonResponse = mapper.readTree(responseString);
+            JsonNode usage = jsonResponse.path("usage");
+            if (usage.isMissingNode() || usage.isNull()) {
+                return null;
+            }
+
+            int inputTokens = usage.path("input_tokens").asInt(0);
+            int outputTokens = usage.path("output_tokens").asInt(0);
+            int cachedTokens = usage.path("cache_creation_input_tokens").asInt(0)
+                    + usage.path("cache_read_input_tokens").asInt(0);
+            int totalTokens = inputTokens + outputTokens;
+
+            AiEnrichmentPayload.BillableUsage billable = new AiEnrichmentPayload.BillableUsage();
+            billable.setModel(CLAUDE_MODEL);
+            billable.setFilePath(filePath);
+            billable.setInputTokens(inputTokens);
+            billable.setOutputTokens(outputTokens);
+            billable.setCachedTokens(cachedTokens);
+            billable.setTotalTokens(totalTokens);
+            return billable;
+        } catch (IOException e) {
+            logger.debug("Unable to parse Anthropic billable usage: {}", e.getMessage());
+            return null;
+        }
     }
 
     private static String extractAssistantText(String responseString) throws IOException {
@@ -234,6 +313,68 @@ public class HaikuSummarizer  implements OntologyMethodsSummarizer {
             }
         }
         return null;
+    }
+
+    private static JsonNode extractStructuredJson(String assistantContent, String... requiredKeys) throws IOException {
+        if (assistantContent == null || assistantContent.isBlank()) {
+            return null;
+        }
+        String cleaned = assistantContent.replace("```json", "").replace("```", "").trim();
+        ObjectMapper mapper = new ObjectMapper();
+        JsonNode bestParsed = null;
+        int bestScore = -1;
+
+        for (int i = 0; i < cleaned.length(); i++) {
+            if (cleaned.charAt(i) != '{') {
+                continue;
+            }
+            int depth = 0;
+            boolean inString = false;
+            boolean escape = false;
+            for (int j = i; j < cleaned.length(); j++) {
+                char c = cleaned.charAt(j);
+                if (inString) {
+                    if (escape) {
+                        escape = false;
+                    } else if (c == '\\') {
+                        escape = true;
+                    } else if (c == '"') {
+                        inString = false;
+                    }
+                    continue;
+                }
+                if (c == '"') {
+                    inString = true;
+                    continue;
+                }
+                if (c == '{') {
+                    depth++;
+                } else if (c == '}') {
+                    depth--;
+                    if (depth == 0) {
+                        String candidate = cleaned.substring(i, j + 1).trim();
+                        try {
+                            JsonNode parsed = mapper.readTree(candidate);
+                            int score = 0;
+                            if (requiredKeys != null) {
+                                for (String key : requiredKeys) {
+                                    if (parsed.has(key)) {
+                                        score += 2;
+                                    }
+                                }
+                            }
+                            if (score > bestScore) {
+                                bestScore = score;
+                                bestParsed = parsed;
+                            }
+                        } catch (IOException ignored) {
+                        }
+                        break;
+                    }
+                }
+            }
+        }
+        return bestParsed;
     }
 
     @Override

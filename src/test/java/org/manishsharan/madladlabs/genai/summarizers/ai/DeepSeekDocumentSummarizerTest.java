@@ -1,5 +1,7 @@
 package org.manishsharan.madladlabs.genai.summarizers.ai;
 
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 import org.junit.jupiter.api.Test;
 import org.manishsharan.madladlabs.genai.doc.DocumentExtractor;
 import org.manishsharan.madladlabs.genai.summarizers.ai.deepseek.DeepSeekSummarizer;
@@ -11,6 +13,7 @@ import java.nio.file.Path;
 import static org.junit.jupiter.api.Assertions.*;
 
 public class DeepSeekDocumentSummarizerTest {
+    private static final Logger logger = LogManager.getLogger(DeepSeekDocumentSummarizerTest.class);
 
     @Test
     void summarizePdfDocument() throws Exception {
@@ -32,8 +35,7 @@ public class DeepSeekDocumentSummarizerTest {
 
         AiEnrichmentPayload.DocumentEnrichment doc = payload.getDocumentEnrichments().get(0);
         assertNotNull(doc.getSummary(), "document summary missing");
-        System.out.println("DeepSeekDocumentSummarizerTest output:");
-        System.out.println(doc.getSummary());
+        logger.info("DeepSeekDocumentSummarizerTest output:\n{}", doc.getSummary());
     }
 
     private static Path resourcePath(String resourceName) throws Exception {

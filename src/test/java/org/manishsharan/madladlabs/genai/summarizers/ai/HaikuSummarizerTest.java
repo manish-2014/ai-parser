@@ -40,9 +40,16 @@ public class HaikuSummarizerTest {
         assertNotNull(payload.getFunctionEnrichments(), "functions list is null");
         assertFalse(payload.getFunctionEnrichments().isEmpty(), "no functions returned");
 
-        System.out.println("HaikuSummarizerTest .. payload start");
-        System.out.println(payload);
-        System.out.println("HaikuTest .. payload _____________________________");
+        logger.info("HaikuSummarizerTest .. payload start\n{}", payload);
+        logger.info("HaikuTest .. payload _____________________________");
+
+        AiEnrichmentPayload.BillableUsage usage = payload.getBillableUsage();
+        assertNotNull(usage, "billable usage is null");
+        logger.info("HaikuSummarizerTest billable: input={}, output={}, cached={}, total={}",
+                usage.getInputTokens(),
+                usage.getOutputTokens(),
+                usage.getCachedTokens(),
+                usage.getTotalTokens());
 
         assertNotNull(payload.getModule(), "module is null");
         assertFalse(payload.getModule().isBlank(), "module is blank");

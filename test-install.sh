@@ -10,8 +10,8 @@ while IFS='=' read -r key value; do
   export "$key"="$value"
   echo "$key = $value"
 done < "$file_path"
+# Ensure log folder exists so Log4j2 can write there.
+mkdir -p logs
 #mvn -Dtest=DeepSeekSummarizerTest test
 #mvn -Dtest=HaikuSummarizerTest test
-mvn clean compile -Dtest=GeminiSummarizerTest test install
-
-echo "Hello world.. your environment is set up"
+mvn clean compile test

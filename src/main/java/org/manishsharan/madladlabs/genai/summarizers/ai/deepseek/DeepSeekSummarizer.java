@@ -14,6 +14,7 @@ import okhttp3.Response;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.jetbrains.annotations.NotNull;
+import org.manishsharan.madladlabs.genai.logging.LlmAuditSink;
 import org.manishsharan.madladlabs.genai.summarizers.ai.PromptUtils;
 import org.manishsharan.madladlabs.genai.summarizers.ai.PromptTemplateForConfigTemplates;
 import org.manishsharan.madladlabs.genai.summarizers.ai.PromptTemplateForDocuments;
@@ -25,7 +26,10 @@ import org.manishsharan.ontology.model.AiEnrichmentPayload;
 
 import java.io.File;
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.HashMap;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
@@ -62,7 +66,10 @@ public class DeepSeekSummarizer implements OntologyMethodsSummarizer {
                 .writeTimeout(60, TimeUnit.SECONDS)    // Request sending
                 .build();
     }
-    public String getDeepSeekResponse(String _systemMessage, String userMessage) throws IOException {
+    public String getDeepSeekResponse(String _systemMessage,
+                                      String userMessage,
+                                      String filePath,
+                                      String pipeline) throws IOException {
         // Create the prompt for the DeepSeek model
         //String prompt = "Review this Java code and generate a YAML summary for each method:\n" + fileContent;
 
@@ -95,8 +102,11 @@ public class DeepSeekSummarizer implements OntologyMethodsSummarizer {
 
         String jsonPayload = mapper.writeValueAsString(payload);
 
-        logger.debug("Request: " + payload);
-        logger.debug("api key: " + API_KEY);
+        logger.info("DeepSeek request prepared (payload bytes={}) file={} pipeline={}",
+                jsonPayload.length(),
+                filePath,
+                pipeline);
+        String requestId = LlmAuditSink.logRequest("deepseek", DEEP_SEEK_MODEL, pipeline, filePath, jsonPayload);
         // Build the HTTP request
         RequestBody body = RequestBody.create(jsonPayload, JSON);
         Request request = new Request.Builder()
@@ -114,7 +124,13 @@ public class DeepSeekSummarizer implements OntologyMethodsSummarizer {
                 throw new IOException("Unexpected response code: " + response.code());
             }
             responseString = response.body().string();
-            logger.debug("Response: " + responseString);
+            logger.info("DeepSeek response received (bytes={}) file={} pipeline={}",
+                    responseString.length(),
+                    filePath,
+                    pipeline);
+            LlmAuditSink.logResponse(requestId, "deepseek", DEEP_SEEK_MODEL, pipeline, filePath, responseString);
+            writeDebugArtifact("deepseek-request.json", jsonPayload);
+            writeDebugArtifact("deepseek-response.json", responseString);
             return responseString;
         }
     }
@@ -143,7 +159,7 @@ public class DeepSeekSummarizer implements OntologyMethodsSummarizer {
         // Send the prompt to the DeepSeek R1 API
 
 
-        String responseString = getDeepSeekResponse(systemPrompt, userPrompt);
+        String responseString = getDeepSeekResponse(systemPrompt, userPrompt, relativePath, "code");
 
         logger.debug("DeepSeek Response: " + responseString);
 
@@ -155,7 +171,21 @@ public class DeepSeekSummarizer implements OntologyMethodsSummarizer {
 
         if(jsonNode != null){
             AiEnrichmentPayload payload = AiEnrichmentPayload.fromJson(jsonNode.toString());
+            if (payload.getFunctionEnrichments() == null && jsonNode.has("functions")) {
+                List<AiEnrichmentPayload.FunctionEnrichment> functions = oMapper
+                        .readerForListOf(AiEnrichmentPayload.FunctionEnrichment.class)
+                        .readValue(jsonNode.get("functions"));
+                payload.setFunctionEnrichments(functions);
+            }
+            if (payload.getModule() == null) {
+                payload.setModule(jsonNode.path("module").asText(null));
+            }
+            if (payload.getLanguage() == null) {
+                payload.setLanguage(jsonNode.path("language").asText(null));
+            }
+            normalizeEdgeSources(payload);
             payload.setLlmModel(DEEP_SEEK_MODEL);
+            payload.setBillableUsage(extractBillableUsage(responseString, relativePath));
             return payload;
         }
         return null;
@@ -171,8 +201,9 @@ public class DeepSeekSummarizer implements OntologyMethodsSummarizer {
         String userPrompt = TemplateRenderer.renderTemplate(PromptTemplateForGUITemplates.PROMPT_TEMPLATE, map);
         String systemPrompt = "You are an experienced software engineer reviewing GUI templates.";
 
-        String responseString = getDeepSeekResponse(systemPrompt, userPrompt);
-        JsonNode jsonNode = extractResponsePayloadJsonNode(responseString);
+        String responseString = getDeepSeekResponse(systemPrompt, userPrompt, relativePath, "gui");
+        String assistantContent = extractAssistantContent(responseString);
+        JsonNode jsonNode = extractTrailingJsonObject(assistantContent);
         if (jsonNode == null) {
             return null;
         }
@@ -181,6 +212,7 @@ public class DeepSeekSummarizer implements OntologyMethodsSummarizer {
         AiEnrichmentPayload payload = new AiEnrichmentPayload();
         payload.setTemplateEnrichments(List.of(template));
         payload.setLlmModel(DEEP_SEEK_MODEL);
+        payload.setBillableUsage(extractBillableUsage(responseString, relativePath));
         return payload;
     }
 
@@ -193,7 +225,7 @@ public class DeepSeekSummarizer implements OntologyMethodsSummarizer {
         String userPrompt = TemplateRenderer.renderTemplate(PromptTemplateForConfigTemplates.PROMPT_TEMPLATE, map);
         String systemPrompt = "You are an experienced software engineer reviewing configuration files.";
 
-        String responseString = getDeepSeekResponse(systemPrompt, userPrompt);
+        String responseString = getDeepSeekResponse(systemPrompt, userPrompt, relativePath, "config");
         String assistantContent = extractAssistantContent(responseString);
         if (assistantContent == null || assistantContent.isBlank()) {
             return null;
@@ -206,6 +238,7 @@ public class DeepSeekSummarizer implements OntologyMethodsSummarizer {
         AiEnrichmentPayload payload = new AiEnrichmentPayload();
         payload.setConfigEnrichments(List.of(config));
         payload.setLlmModel(DEEP_SEEK_MODEL);
+        payload.setBillableUsage(extractBillableUsage(responseString, relativePath));
         return payload;
     }
 
@@ -223,7 +256,7 @@ public class DeepSeekSummarizer implements OntologyMethodsSummarizer {
         String userPrompt = TemplateRenderer.renderTemplate(PromptTemplateForDocuments.PROMPT_TEMPLATE, map);
         String systemPrompt = "You are an experienced software engineer reviewing technical documents.";
 
-        String responseString = getDeepSeekResponse(systemPrompt, userPrompt);
+        String responseString = getDeepSeekResponse(systemPrompt, userPrompt, relativePath, "document");
         String assistantContent = extractAssistantContent(responseString);
         if (assistantContent == null || assistantContent.isBlank()) {
             return null;
@@ -238,6 +271,7 @@ public class DeepSeekSummarizer implements OntologyMethodsSummarizer {
         AiEnrichmentPayload payload = new AiEnrichmentPayload();
         payload.setDocumentEnrichments(List.of(doc));
         payload.setLlmModel(DEEP_SEEK_MODEL);
+        payload.setBillableUsage(extractBillableUsage(responseString, relativePath));
         return payload;
     }
 
@@ -265,6 +299,38 @@ public class DeepSeekSummarizer implements OntologyMethodsSummarizer {
 
     }
 
+    private static AiEnrichmentPayload.BillableUsage extractBillableUsage(String responseString, String filePath) {
+        if (responseString == null || responseString.isBlank()) {
+            return null;
+        }
+        ObjectMapper mapper = new ObjectMapper();
+        try {
+            JsonNode root = mapper.readTree(responseString);
+            JsonNode usage = root.path("usage");
+            if (usage.isMissingNode() || usage.isNull()) {
+                return null;
+            }
+
+            int inputTokens = usage.path("prompt_tokens").asInt(0);
+            int outputTokens = usage.path("completion_tokens").asInt(0);
+            int totalTokens = usage.path("total_tokens").asInt(inputTokens + outputTokens);
+            int cachedTokens = usage.path("prompt_cache_hit_tokens").asInt(
+                    usage.path("prompt_tokens_details").path("cached_tokens").asInt(0));
+
+            AiEnrichmentPayload.BillableUsage billable = new AiEnrichmentPayload.BillableUsage();
+            billable.setModel(DEEP_SEEK_MODEL);
+            billable.setFilePath(filePath);
+            billable.setInputTokens(inputTokens);
+            billable.setOutputTokens(outputTokens);
+            billable.setCachedTokens(cachedTokens);
+            billable.setTotalTokens(totalTokens);
+            return billable;
+        } catch (IOException e) {
+            logger.debug("Unable to parse DeepSeek billable usage: {}", e.getMessage());
+            return null;
+        }
+    }
+
     private static String extractAssistantContent(String input) throws Exception {
         ObjectMapper mapper = new ObjectMapper();
         if (input == null || input.isEmpty()) {
@@ -275,6 +341,107 @@ public class DeepSeekSummarizer implements OntologyMethodsSummarizer {
             return null;
         }
         return root.path("choices").path(0).path("message").path("content").asText();
+    }
+
+    private static JsonNode extractTrailingJsonObject(String assistantContent) throws IOException {
+        if (assistantContent == null || assistantContent.isBlank()) {
+            return null;
+        }
+        String cleaned = assistantContent.replace("```json", "").replace("```", "").trim();
+        ObjectMapper mapper = new ObjectMapper();
+        JsonNode bestParsed = null;
+        int bestScore = -1;
+
+        for (int i = 0; i < cleaned.length(); i++) {
+            if (cleaned.charAt(i) != '{') {
+                continue;
+            }
+            int depth = 0;
+            boolean inString = false;
+            boolean escape = false;
+            for (int j = i; j < cleaned.length(); j++) {
+                char c = cleaned.charAt(j);
+                if (inString) {
+                    if (escape) {
+                        escape = false;
+                    } else if (c == '\\') {
+                        escape = true;
+                    } else if (c == '"') {
+                        inString = false;
+                    }
+                    continue;
+                }
+                if (c == '"') {
+                    inString = true;
+                    continue;
+                }
+                if (c == '{') {
+                    depth++;
+                } else if (c == '}') {
+                    depth--;
+                    if (depth == 0) {
+                        String candidate = cleaned.substring(i, j + 1).trim();
+                        try {
+                            JsonNode parsed = mapper.readTree(candidate);
+                            int score = 0;
+                            if (parsed.has("summary")) {
+                                score += 2;
+                            }
+                            if (parsed.has("file")) {
+                                score += 2;
+                            }
+                            if (parsed.has("endpoints")) {
+                                score += 1;
+                            }
+                            if (score > bestScore) {
+                                bestScore = score;
+                                bestParsed = parsed;
+                            }
+                        } catch (IOException ignored) {
+                            // continue searching for a valid JSON object
+                        }
+                        break;
+                    }
+                }
+            }
+        }
+        return bestParsed;
+    }
+
+    private static void writeDebugArtifact(String fileName, String content) {
+        String enabled = System.getenv("LLM_DEBUG_OUTPUT");
+        if (!"true".equalsIgnoreCase(enabled)) {
+            return;
+        }
+        try {
+            Path dir = Paths.get("logs");
+            Files.createDirectories(dir);
+            Path out = dir.resolve(fileName);
+            Files.writeString(out, content, StandardCharsets.UTF_8);
+            logger.info("Wrote LLM debug output to {}", out.toAbsolutePath());
+        } catch (IOException e) {
+            logger.warn("Failed to write LLM debug output: {}", e.getMessage());
+        }
+    }
+
+    private static void normalizeEdgeSources(AiEnrichmentPayload payload) {
+        if (payload == null || payload.getFunctionEnrichments() == null) {
+            return;
+        }
+        for (AiEnrichmentPayload.FunctionEnrichment fn : payload.getFunctionEnrichments()) {
+            if (fn == null || fn.getRelationships() == null || fn.getFqn() == null) {
+                continue;
+            }
+            for (AiEnrichmentPayload.Edge edge : fn.getRelationships()) {
+                if (edge == null) {
+                    continue;
+                }
+                String source = edge.getSource();
+                if (source == null || !source.equals(fn.getFqn())) {
+                    edge.setSource(fn.getFqn());
+                }
+            }
+        }
     }
 
     @Override
